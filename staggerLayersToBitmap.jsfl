@@ -6,23 +6,23 @@
 	if (fl.getDocumentDOM().getTimeline().layers[0].name !== "vectors") {
 		copyAllToFile(true);
 	}
-	
+
 	var dom = fl.getDocumentDOM();
 
 	if (!dom) return;
 
 	var timeline = dom.getTimeline();
 	var folderLayer = timeline.layers[0];
-	
+
 	var i, bitmapLayer, bitmap, frame;
-	
+
 
 	// Undo conversion
 	if (folderLayer.name == "vectors")
 	{
 		var bitmapIndex = timeline.layers.length - 1;
 		var bitmapLayer = timeline.layers[bitmapIndex];
-		
+
 		// Flatten layers to one layer
 		for (var i = 1; i < timeline.frameCount; i++)
 		{
@@ -40,12 +40,13 @@
 				continue;
 			} else {
 				selectFrame(bitmapIndex, i);
-				timeline.convertToBlankKeyframes();
 				dom.selectAll();
-				dom.clipCut();
-				selectFrame(bitmapIndex, i);
-				dom.clipPaste(true);
-				timeline.deleteLayer(bitmapIndex - 1);
+				if (dom.selection.length) {
+					dom.clipCut();
+					selectFrame(bitmapIndex, i);
+					dom.clipPaste(true);
+					timeline.deleteLayer(bitmapIndex - 1);
+				}
 			}
 		}
 
@@ -65,10 +66,10 @@
 		folderLayer.locked = false;
 		folderLayer.layerType = "normal";
 		timeline.deleteLayer(0);
-		
+
 		// Delete the bitmap layer
 		timeline.deleteLayer(timeline.layers.length - 1);
-		
+
 		// Set guided layers back to normal
 		for (i = timeline.layers.length - 1; i >= 0; i--)
 		{
@@ -76,7 +77,7 @@
 		}
 		return;
 	}
-	
+
 	var bitmapName;
 	var scale = localToGlobalScale();
 
@@ -84,28 +85,6 @@
 	if (scale === null)
 	{
 		return;
-	}
-
-	// If we're inside a symbol, use the name of the
-	if (timeline.libraryItem)
-	{
-		var item = timeline.libraryItem;
-		bitmapName = item.name;
-		var index = bitmapName.indexOf('/');
-		if (index > -1)
-		{
-			bitmapName = bitmapName.substr(index + 1);
-		}
-	}
-	else
-	{
-		if (!dom.name)
-		{
-			return alert("Please save document first.");
-		}
-
-		// Chop of the ".fla" or ".xfl" extension
-		bitmapName = dom.name.substr(0, dom.name.lastIndexOf('.'));
 	}
 
 	// The number of layers
@@ -133,7 +112,7 @@
 	var parentLayer = timeline.layers[0];
 	parentLayer.visible = false;
 	parentLayer.locked = true;
-    
+
 	// Add a new bitmap layer above the copied layers
 	var bitmapLayerIndex = origLength + 1;
 	timeline.setSelectedLayers(bitmapLayerIndex);
@@ -142,28 +121,30 @@
 
     var EMPTY = -1;
     var KEYFRAME = 1;
-     
+
     var status;
     var numFrames = timeline.frameCount;
-     
+
     // Flatten vector art if on multiple layers
     flattenMultipleLayers();
 
     // Convert all vectors to shape objects for punching out
     for (var i = 0; i < timeline.frameCount;) {
 		var frame = timeline.layers[bitmapLayerIndex].frames[i];
-        selectFrame(bitmapLayerIndex, i)
-        dom.union();
+        selectFrame(bitmapLayerIndex, i);
+		if (frame.elements.length) {
+			dom.union();
+		}
 		i += frame.duration;
     }
-	
+
     // Copy layer and create editing layers
     timeline.copyLayers(bitmapLayerIndex);
     timeline.setSelectedLayers(bitmapLayerIndex);
-    
+
     var editLayerIndex = timeline.pasteLayers(bitmapLayerIndex + 1);
     timeline.layers[editLayerIndex].name = 'edit';
-	
+
     // Create a third layer to keep original artwork
     var secondEditLayerIndex = timeline.pasteLayers(editLayerIndex + 1);
     timeline.layers[secondEditLayerIndex].name = 'secondEdit';
@@ -173,13 +154,17 @@
     {
         timeline.layers[i].visible = false;
     }
-	
+
     for (var i = 0; i < timeline.frameCount - 1;){
 		var frame = timeline.layers[bitmapLayerIndex].frames[i];
+		if (!frame.elements.length) {
+			i += frame.duration;
+			continue;
+		}
         removeOverlap(i);
 		i += frame.duration;
     };
-    
+
     // Run bitmap conversion
     convertToBitmap();
 
@@ -188,77 +173,104 @@
 	{
 		timeline.deleteLayer(timeline.layers.length - 1);
 	}
-	
+
+	var emptyFrames = [];
+
 	// Stagger frames to build overlapping artwork
-	for (var i = timeline.frameCount - 1; i >= 1; i--) {
+	for (var i = timeline.frameCount - 1; i >= 0; i--) {
 		var lastLayerIndex = timeline.layers.length - 1;
 		var frame = timeline.layers[lastLayerIndex].frames[i];
-	
+
 		// Check the status of the current frame
 		// 0 = no keyframes
 		// 1 = keyframes no elements
 		// 2 = keyframes + elements
 		status = frameStatus(lastLayerIndex, i);
-	
+
 		if (status === 0) {
 			continue;
+		// } else if (status === 1) {
+		// 	for (var j = bitmapLayerIndex; j <= lastLayerIndex; j++) {
+		// 		selectFrame(j, i);
+		// 		timeline.convertToBlankKeyframes(i);
+		// 	}
 		} else {
 			selectFrame(timeline.layers.length - 1, i);
-			timeline.cutFrames(i);
-			timeline.clearKeyframes(i, timeline.frameCount);
-			timeline.addNewLayer();
-			timeline.pasteFrames(i);
+			if (!dom.selection.length) {
+				emptyFrames.push(i)
+				// timeline.addNewLayer();
+				// timeline.convertToBlankKeyframes();
+			} else {
+				// Don't make a new layer for first frame
+				if (i > 0) {
+					timeline.cutFrames(i);
+					timeline.clearKeyframes(i, timeline.frameCount);
+					timeline.addNewLayer();
+					timeline.pasteFrames(i);
+				}
+				// But do clear keyframe if there are any empty
+				if (emptyFrames.length) {
+					for (var j = 0; j < emptyFrames.length; j++) {
+						timeline.convertToBlankKeyframes(emptyFrames[j]);
+					}
+				}
+			}
 		}
 	}
-	
-	
+
+
 	// This is also necessary for avoiding a crash (see first comment)
 	if (folderLayer.name !== "vectors") {
 		copyAllToFile(false);
 	}
-	
-	
+
+
 	// FUNCTIONS ---------------------------------------------
-	
-	
+
     // If an animation is made of many overlapping redundant shapes, remove the redundant art
     function removeOverlap(i){
 		fl.outputPanel.clear();
 		var bitmapLayer = timeline.layers[bitmapLayerIndex];
-		var frame = bitmapLayer.frames[i]
-		var nextFrame = bitmapLayer.frames[i + frame.duration]
+		var frame = bitmapLayer.frames[i];
+		var nextIndex = i + frame.duration;
+		var nextFrame = bitmapLayer.frames[nextIndex];
+		if (nextFrame && !nextFrame.elements.length) {
+			var emptyFrame = nextFrame;
+			nextIndex = i + frame.duration + emptyFrame.duration;
+			nextFrame = bitmapLayer.frames[nextIndex];
+		}
 		if (!nextFrame) {
 			return;
 		}
-		
+
         // Punch the first frame out of the second frame
 		selectFrame(secondEditLayerIndex, i);
         dom.clipCopy();
-        selectFrame(editLayerIndex, i + frame.duration);
+        selectFrame(editLayerIndex, nextIndex);
         dom.clipPaste(true);
-        selectFrame(editLayerIndex, i + frame.duration);
-        dom.punch(); // <-- TODO: Is this crashing because Flash is in a certain state when it's trying to run?
+        selectFrame(editLayerIndex, nextIndex);
+        dom.punch();
 
         // Add stroke to expand shape by 10pt (color not important)
         // selectFrame(editLayerIndex, i + frame.duration);
 		dom.setFillColor('#ffffff');
         dom.setStroke('#ffffff', 10, 'solid');
         dom.convertLinesToFills();
-		
+
         // Punch the expanded second frame out of the original first frame
-        selectFrame(editLayerIndex, i + frame.duration);
+        selectFrame(editLayerIndex, nextIndex);
         dom.clipCopy();
         selectFrame(secondEditLayerIndex, i);
         dom.clipPaste(true);
         selectFrame(secondEditLayerIndex, i);
         dom.punch();
-		
+
         // Punch the smaller first frame out of the original second frame
         selectFrame(secondEditLayerIndex, i);
         dom.clipCopy();
-        selectFrame(bitmapLayerIndex, i + frame.duration);
+        selectFrame(bitmapLayerIndex, nextIndex);
         dom.clipPaste(true);
-        selectFrame(bitmapLayerIndex, i + frame.duration);
+        selectFrame(bitmapLayerIndex, nextIndex);
         dom.punch();
 
         // A = frame 1 art
@@ -268,33 +280,59 @@
         // Ap = A - Bp
         // Boverlap = B - Ap
     }
-	
+
 	function copyAllToFile(newFile) {
 		var dom = fl.getDocumentDOM();
 		var timeline = dom.getTimeline();
-		
+
 		for (var i = 0; i < timeline.layers.length; ++i) {
 			timeline.setSelectedLayers(i, false)
 		}
 
 		timeline.copyLayers();
 		if (newFile === true) {
+			// If we're inside a symbol, save the name for bitmap naming
+			if (timeline.libraryItem)
+			{
+				var item = timeline.libraryItem;
+				bitmapName = item.name;
+				var index = bitmapName.indexOf('/');
+				if (index > -1)
+				{
+					bitmapName = bitmapName.substr(index + 1);
+				}
+			}
+			else
+			{
+				if (!dom.name)
+				{
+					return alert("Please save document first.");
+				}
+
+				// Chop of the ".fla" or ".xfl" extension
+				bitmapName = dom.name.substr(0, dom.name.lastIndexOf('.'));
+			}
 			fl.createDocument();
 		} else {
 			fl.closeDocument(fl.documents[fl.documents.length - 1], false);
 		}
 		var newTimeline = fl.getDocumentDOM().getTimeline();
+		// Delete any empty layers when pasting back into original file
+		// Otherwise top layer will not be 'vector' and undo will not work
+		for (var i = 1; i < newTimeline.layers.length; ++i) {
+			newTimeline.deleteLayer(i);
+		}
 		newTimeline.pasteLayers();
 		newTimeline.deleteLayer(newTimeline.layers.length - 1);
 	}
-	
+
 	function selectFrame(layer, frame)
 	{
 		// Select the current frame
 		timeline.setSelectedLayers(layer);
 		timeline.setSelectedFrames(frame, frame + 1);
 	}
-    
+
     function flattenMultipleLayers() {
         // Select the contents of the original layers
         for(i = numFrames - 1; i >=0 ; --i) {
@@ -329,9 +367,12 @@
             dom.clipPaste(true);
         }
     }
-    
+
     function convertToBitmap() {
         for(i = numFrames - 1; i >=0 ; --i) {
+			if (!bitmapLayer.frames[i].elements[0]) {
+				continue;
+			}
 			selectFrame(bitmapLayerIndex, i);
 
             // Scale the selection
@@ -383,7 +424,7 @@
 		}
 		return status;
 	}
-    
+
 
 	function localToGlobalScale()
 	{
